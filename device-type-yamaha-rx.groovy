@@ -10,7 +10,8 @@
 preferences {
 	input("destIp", "text", title: "IP", description: "The device IP")
     input("destPort", "number", title: "Port", description: "The port you wish to connect")
-    input("inputChan","enum", title: "Input Control", description: "Select the inputs you want to use", options: ["TUNER","HDMI1","HDMI2","HDMI3","HDMI4","HDMI5","AV1","AV2","AV3","AV4","AV5","V-AUX","AUDIO1","AUIDO2","SERVER","NET RADIO","USB"],multiple: true,required: true)
+    input("inputChan","enum", title: "Input Control", description: "Select the inputs you want to use", options: ["TUNER","MULTI CH","PHONO","HDMI1","HDMI2","HDMI3","HDMI4","HDMI5","HDMI6","HDMI7","AV1","AV2","AV3","AV4","AV5","AV6","AV7","V-AUX","AUDIO","AUDIO1","AUDIO2","AUDIO3","AUDIO4","NET","Rhapsody","SIRIUS IR","Pandora","SERVER","NET RADIO","USB","iPod (USB)","AirPlay"],multiple: true,required: true)
+    input("Zone","enum", title: "Zone", description: "Select the Zone you want to use", options: ["Main_Zone","Zone_2"],multiple: false,required: true)
 }
  
 
@@ -25,19 +26,18 @@ metadata {
         attribute "mute", "string"
         attribute "input", "string"
         attribute "inputChan", "enum"
-        
+
         command "mute"
         command "unmute"
         command "inputSelect", ["string"]
         command "inputNext"
         command "toggleMute"
-        
+
       	}
 
 	simulator {
 		// TODO-: define status and reply messages here
 	}
-
 	tiles {
 		standardTile("switch", "device.switch", width: 2, height: 2, canChangeIcon: false, canChangeBackground: true) {
             state "on", label: '${name}', action:"switch.off", backgroundColor: "#79b821", icon:"st.Electronics.electronics16"
@@ -56,7 +56,7 @@ metadata {
         controlTile("level", "device.level", "slider", height: 1, width: 2, inactiveLabel: false, range: "(0..100)") {
 			state "level", label: '${name}', action:"setLevel"
 		}
-        
+
 		main "switch"
         details(["switch","input","mute","level","poll"])
 	}
@@ -66,33 +66,38 @@ metadata {
 
 def parse(String description) {
  	def map = stringToMap(description)
+    log.debug ("Parse started")
     if(!map.body) { return }
 	def body = new String(map.body.decodeBase64())
 
 	def statusrsp = new XmlSlurper().parseText(body)
-	def power = statusrsp.Main_Zone.Basic_Status.Power_Control.Power.text()
+    log.debug ("Parse got body ${body}...")
+	def power = statusrsp.$Zone.Basic_Status.Power_Control.Power.text()
+    log.debug ("$Zone Power - ${power}")
     if(power == "On") { 
     	sendEvent(name: "switch", value: 'on')
     }
     if(power != "" && power != "On") { 
     	sendEvent(name: "switch", value: 'off')
     }
-    
-    def inputChan = statusrsp.Main_Zone.Basic_Status.Input.Input_Sel.text()
-    if(inputChan != "") { 
+  
+    def inputChan = statusrsp.$Zone.Basic_Status.Input.Input_Sel.text()
+    log.debug ("$Zone Input - ${inputChan}")
+ 	if(inputChan != "") { 
     	sendEvent(name: "input", value: inputChan)
 	}
 
-    def muteLevel = statusrsp.Main_Zone.Basic_Status.Volume.Mute.text()
+    def muteLevel = statusrsp.$Zone.Basic_Status.Volume.Mute.text()
+    log.debug ("$Zone Mute - ${muteLevel}")
     if(muteLevel == "On") { 
     	sendEvent(name: "mute", value: 'muted')
 	}
     if(muteLevel != "" && muteLevel != "On") {
 	    sendEvent(name: "mute", value: 'unmuted')
     }
-    
-    if(statusrsp.Main_Zone.Basic_Status.Volume.Lvl.Val.text()) { 
-    	def int volLevel = statusrsp.Main_Zone.Basic_Status.Volume.Lvl.Val.toInteger() ?: -250
+
+    if(statusrsp.$Zone.Basic_Status.Volume.Lvl.Val.text()) { 
+    	def int volLevel = statusrsp.$Zone.Basic_Status.Volume.Lvl.Val.toInteger() ?: -250
         volLevel = sprintf("%d",(((volLevel + 800) / 9)/5)*5)
    		def int curLevel = 65
         try {
@@ -101,9 +106,11 @@ def parse(String description) {
         	curLevel = 65
         }
         if(curLevel != volLevel) {
+           log.debug ("$Zone level - ${volLevel}")
     		sendEvent(name: "level", value: volLevel)
         }
     }
+
 }
 
 // Needs to round to the nearest 5
@@ -112,18 +119,20 @@ def setLevel(val) {
     sendEvent(name: "level", value: val)
     
     	def scaledVal = sprintf("%d",val * 9 - 800)
-    	scaledVal = ((scaledVal/5) as Integer) * 5
-    	request("<YAMAHA_AV cmd=\"PUT\"><Main_Zone><Volume><Lvl><Val>$scaledVal</Val><Exp>1</Exp><Unit>dB</Unit></Lvl></Volume></Main_Zone></YAMAHA_AV>")
+    	scaledVal = (((scaledVal as Integer)/5) as Integer) * 5
+    	request("<YAMAHA_AV cmd=\"PUT\"><$Zone><Volume><Lvl><Val>$scaledVal</Val><Exp>1</Exp><Unit>dB</Unit></Lvl></Volume></$Zone></YAMAHA_AV>")
 }
 
 def on() {
+    log.debug "on"
 	sendEvent(name: "switch", value: 'on')
-	request('<YAMAHA_AV cmd=\"PUT\"><Main_Zone><Power_Control><Power>On</Power></Power_Control></Main_Zone></YAMAHA_AV>')
+	request("<YAMAHA_AV cmd=\"PUT\"><$Zone><Power_Control><Power>On</Power></Power_Control></$Zone></YAMAHA_AV>")
 }
 
 def off() {
+    log.debug "off"
 	sendEvent(name: "switch", value: 'off')
-	request('<YAMAHA_AV cmd="PUT"><Main_Zone><Power_Control><Power>Standby</Power></Power_Control></Main_Zone></YAMAHA_AV>')
+	request("<YAMAHA_AV cmd=\"PUT\"><$Zone><Power_Control><Power>Standby</Power></Power_Control></$Zone></YAMAHA_AV>")
 }
 
 def toggleMute(){
@@ -133,19 +142,19 @@ def toggleMute(){
 
 def mute() { 
 	sendEvent(name: "mute", value: "muted")
-	request('<YAMAHA_AV cmd="PUT"><Main_Zone><Volume><Mute>On</Mute></Volume></Main_Zone></YAMAHA_AV>')
+	request("<YAMAHA_AV cmd=\"PUT\"><$Zone><Volume><Mute>On</Mute></Volume></$Zone></YAMAHA_AV>")
 }
 
 def unmute() { 
 	sendEvent(name: "mute", value: "unmuted")
-	request('<YAMAHA_AV cmd="PUT"><Main_Zone><Volume><Mute>Off</Mute></Volume></Main_Zone></YAMAHA_AV>')
+	request("<YAMAHA_AV cmd=\"PUT\"><$Zone><Volume><Mute>Off</Mute></Volume></$Zone></YAMAHA_AV>")
 }
 
 def inputNext() { 
 
 	def cur = device.currentValue("input")
 	// modify your inputs right here! 
-    def selectedInputs = ["HDMI1","HDMI2","HDMI5","AV1","HDMI1"]
+    def selectedInputs = ["TUNER","MULTI CH","PHONO","HDMI1","HDMI2","HDMI3","HDMI4","HDMI5","HDMI6","HDMI7","AV1","AV2","AV3","AV4","AV5","AV6","AV7","V-AUX","AUDIO","AUDIO1","AUDIO2","AUDIO3","AUDIO4","NET","Rhapsody","SIRIUS IR","Pandora","SERVER","NET RADIO","USB","iPod (USB)","AirPlay"]
     
     
     def semaphore = 0
@@ -162,7 +171,8 @@ def inputNext() {
 
 def inputSelect(channel) {
  	sendEvent(name: "input", value: channel	)
-	request("<YAMAHA_AV cmd=\"PUT\"><Main_Zone><Input><Input_Sel>$channel</Input_Sel></Input></Main_Zone></YAMAHA_AV>")
+    log.debug "Input $channel"
+	request("<YAMAHA_AV cmd=\"PUT\"><$Zone><Input><Input_Sel>$channel</Input_Sel></Input></$Zone></YAMAHA_AV>")
 }
 
 def poll() { 
@@ -170,7 +180,8 @@ def poll() {
 }
 
 def refresh() {
-    request('<YAMAHA_AV cmd="GET"><Main_Zone><Basic_Status>GetParam</Basic_Status></Main_Zone></YAMAHA_AV>')
+    log.debug ("Refresh")
+    request("<YAMAHA_AV cmd=\"GET\"><$Zone><Basic_Status>GetParam</Basic_Status></$Zone></YAMAHA_AV>")
 }
 
 def request(body) { 
@@ -186,7 +197,7 @@ def request(body) {
         	'headers': [ HOST: "$destIp:$destPort" ]
 		) 
         
- //   log.debug hubAction    
+    hubAction    
         
     hubAction
 }
